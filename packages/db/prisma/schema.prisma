@@ -1,0 +1,576 @@
+// Tourism Passport — MVP 1 schema
+// Source: specs/02-domains/*/data.md + specs/01-architecture/data-model.md
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  tourist
+  site_operator
+  authority_admin
+  platform_admin
+  merchant_owner
+  merchant_staff
+}
+
+enum UserStatus {
+  active
+  disabled
+}
+
+enum PhoneVerifiedVia {
+  zalo
+  sms
+}
+
+enum TouristLevel {
+  TRAVELLER
+  EXPLORER
+  LOCAL_INSIDER
+}
+
+enum OrganizationType {
+  DESTINATION_OPERATOR
+  MERCHANT
+  AUTHORITY
+  PLATFORM
+}
+
+enum OrganizationStatus {
+  active
+  disabled
+}
+
+enum DestinationStatus {
+  draft
+  published
+  archived
+}
+
+enum ParticipationLevel {
+  catalog
+  partner
+}
+
+enum SiteCategory {
+  HERITAGE
+  BEACH
+  NATURE
+  MOUNTAIN
+  ISLAND
+  CULTURAL
+  FOOD
+  OTHER
+}
+
+enum SiteStatus {
+  draft
+  published
+  archived
+}
+
+enum QrMode {
+  rotating
+  static
+}
+
+enum CheckinStatus {
+  confirmed
+  void
+}
+
+enum ProofLevel {
+  L0
+  L1
+  L2
+}
+
+enum EvidenceType {
+  gps
+  qr
+  photo
+}
+
+enum PointTxnType {
+  CHECKIN_AWARD
+  CHECKIN_EVIDENCE_BONUS
+  VOUCHER_CLAIM
+  ADMIN_ADJUST
+}
+
+enum BadgeCriteriaType {
+  CHECKIN_COUNT
+  FIRST_CHECKIN
+}
+
+enum BadgeStatus {
+  draft
+  published
+  archived
+}
+
+enum MerchantCategory {
+  RESTAURANT
+  CAFE
+  HOTEL
+  TOUR
+  TRANSPORT
+  EXPERIENCE
+  OTHER
+}
+
+enum MerchantStatus {
+  draft
+  active
+  suspended
+}
+
+enum VoucherStatus {
+  draft
+  issued
+  cancelled
+}
+
+enum VoucherClaimStatus {
+  active
+  redeemed
+  expired
+  cancelled
+}
+
+// ─── Identity ────────────────────────────────────────────────────────────────
+
+model User {
+  id                String            @id @default(uuid()) @db.Uuid
+  email             String?           @unique
+  phone             String?           @unique
+  passwordHash      String            @map("password_hash")
+  role              UserRole
+  status            UserStatus        @default(active)
+  pinFailedAttempts Int               @default(0) @map("pin_failed_attempts")
+  pinLockedUntil    DateTime?         @map("pin_locked_until") @db.Timestamptz(6)
+  phoneVerifiedAt   DateTime?         @map("phone_verified_at") @db.Timestamptz(6)
+  phoneVerifiedVia  PhoneVerifiedVia? @map("phone_verified_via")
+  lastLoginAt       DateTime?         @map("last_login_at") @db.Timestamptz(6)
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?         @map("deleted_at") @db.Timestamptz(6)
+
+  touristProfile       TouristProfile?
+  deviceBindings       DeviceBinding[]
+  refreshTokens        RefreshToken[]
+  memberships          Membership[]
+  consents             UserConsent[]
+  otpChallenges        OtpChallenge[]
+  checkins             Checkin[]
+  voidedCheckins       Checkin[]            @relation("CheckinVoidedBy")
+  pointTransactions    PointTransaction[]
+  userBadges           UserBadge[]
+  voucherClaims        VoucherClaim[]
+  voucherRedemptions   VoucherRedemption[]  @relation("RedeemedByStaff")
+
+  @@map("users")
+}
+
+model TouristProfile {
+  userId          String       @id @map("user_id") @db.Uuid
+  displayName     String       @default("Khách") @map("display_name")
+  bio             String?
+  avatarObjectKey String?      @map("avatar_object_key")
+  level           TouristLevel @default(TRAVELLER)
+  pointsBalance   Int          @default(0) @map("points_balance")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("tourist_profiles")
+}
+
+model DeviceBinding {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  deviceIdHash String   @map("device_id_hash")
+  label        String?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt   DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceIdHash])
+  @@index([userId])
+  @@map("device_bindings")
+}
+
+model RefreshToken {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  tokenHash    String    @unique @map("token_hash")
+  deviceIdHash String?   @map("device_id_hash")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Membership {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  role           UserRole
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("memberships")
+}
+
+model UserConsent {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  termsVersion   String   @map("terms_version")
+  privacyVersion String   @map("privacy_version")
+  acceptedAt     DateTime @map("accepted_at") @db.Timestamptz(6)
+  ip             String?
+  userAgent      String?  @map("user_agent")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_consents")
+}
+
+/// Reserved for SMS reset PIN — unused in MVP 1
+model OtpChallenge {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  phone     String?
+  channel   String   @default("sms")
+  codeHash  String   @map("code_hash")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([phone])
+  @@map("otp_challenges")
+}
+
+// ─── Destinations & Organizations ────────────────────────────────────────────
+
+model Organization {
+  id        String             @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String?            @unique
+  type      OrganizationType
+  status    OrganizationStatus @default(active)
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships Membership[]
+  sites       TourismSite[]
+  merchants   Merchant[]
+  badges      Badge[]          @relation("BadgeIssuer")
+
+  @@index([type, status])
+  @@map("organizations")
+}
+
+model Destination {
+  id             String            @id @default(uuid()) @db.Uuid
+  name           String
+  slug           String            @unique
+  description    String?
+  coverObjectKey String?           @map("cover_object_key")
+  status         DestinationStatus @default(draft)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sites     TourismSite[]
+  checkins  Checkin[]
+  badges    Badge[]
+  merchants Merchant[]
+  vouchers  Voucher[]
+
+  @@map("destinations")
+}
+
+model TourismSite {
+  id                   String             @id @default(uuid()) @db.Uuid
+  destinationId        String             @map("destination_id") @db.Uuid
+  organizationId       String?            @map("organization_id") @db.Uuid
+  participationLevel   ParticipationLevel @default(catalog) @map("participation_level")
+  name                 String
+  slug                 String
+  description          String?
+  address              String?
+  latitude             Decimal            @db.Decimal(10, 7)
+  longitude            Decimal            @db.Decimal(10, 7)
+  geofenceRadiusMeters Int                @map("geofence_radius_meters")
+  category             SiteCategory
+  status               SiteStatus         @default(draft)
+  checkInEnabled       Boolean            @default(true) @map("check_in_enabled")
+  qrMode               QrMode?            @map("qr_mode")
+  staticQrEnabled      Boolean            @default(false) @map("static_qr_enabled")
+  coverObjectKey       String?            @map("cover_object_key")
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt            DateTime?          @map("deleted_at") @db.Timestamptz(6)
+
+  destination  Destination  @relation(fields: [destinationId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  checkins     Checkin[]
+
+  @@unique([destinationId, slug])
+  @@index([destinationId, status])
+  @@index([organizationId])
+  @@index([participationLevel])
+  @@map("tourism_sites")
+}
+
+// ─── Check-in ────────────────────────────────────────────────────────────────
+
+model Checkin {
+  id                 String             @id @default(uuid()) @db.Uuid
+  userId             String             @map("user_id") @db.Uuid
+  tourismSiteId      String             @map("tourism_site_id") @db.Uuid
+  destinationId      String             @map("destination_id") @db.Uuid
+  participationLevel ParticipationLevel @map("participation_level")
+  proofLevel         ProofLevel         @default(L0) @map("proof_level")
+  evidenceFlags      String[]           @default([]) @map("evidence_flags")
+  pointsAwarded      Int                @default(0) @map("points_awarded")
+  status             CheckinStatus      @default(confirmed)
+  voidReason         String?            @map("void_reason")
+  voidedAt           DateTime?          @map("voided_at") @db.Timestamptz(6)
+  voidedByUserId     String?            @map("voided_by_user_id") @db.Uuid
+  checkedInAt        DateTime           @map("checked_in_at") @db.Timestamptz(6)
+  upgradeExpiresAt   DateTime           @map("upgrade_expires_at") @db.Timestamptz(6)
+  localDate          DateTime           @map("local_date") @db.Date
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user         User              @relation(fields: [userId], references: [id])
+  voidedBy     User?             @relation("CheckinVoidedBy", fields: [voidedByUserId], references: [id])
+  tourismSite  TourismSite       @relation(fields: [tourismSiteId], references: [id])
+  destination  Destination       @relation(fields: [destinationId], references: [id])
+  evidences    CheckinEvidence[]
+  proof        CheckinProof?
+  pointTxns    PointTransaction[]
+  userBadges   UserBadge[]
+
+  @@index([userId, checkedInAt(sort: Desc)])
+  @@index([tourismSiteId, checkedInAt(sort: Desc)])
+  @@index([userId, tourismSiteId, localDate])
+  @@map("checkins")
+}
+
+model CheckinEvidence {
+  id              String       @id @default(uuid()) @db.Uuid
+  checkinId       String       @map("checkin_id") @db.Uuid
+  type            EvidenceType
+  latitude        Decimal?     @db.Decimal(10, 7)
+  longitude       Decimal?     @db.Decimal(10, 7)
+  accuracyMeters  Int?         @map("accuracy_meters")
+  distanceMeters  Decimal?     @map("distance_meters") @db.Decimal(10, 2)
+  withinGeofence  Boolean?     @map("within_geofence")
+  qrMode          QrMode?      @map("qr_mode")
+  qrTokenHash     String?      @map("qr_token_hash")
+  photoObjectKey  String?      @map("photo_object_key")
+  deviceIdHash    String?      @map("device_id_hash")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  checkin Checkin @relation(fields: [checkinId], references: [id], onDelete: Cascade)
+
+  @@unique([checkinId, type])
+  @@map("checkin_evidences")
+}
+
+/// Denormalized snapshot for audit / query — updated on each evidence change
+model CheckinProof {
+  checkinId      String      @id @map("checkin_id") @db.Uuid
+  proofLevel     ProofLevel  @map("proof_level")
+  evidenceFlags  String[]    @default([]) @map("evidence_flags")
+  latitude       Decimal?    @db.Decimal(10, 7)
+  longitude      Decimal?    @db.Decimal(10, 7)
+  accuracyMeters Int?        @map("accuracy_meters")
+  qrMode         QrMode?     @map("qr_mode")
+  deviceIdHash   String?     @map("device_id_hash")
+  ip             String?
+  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  checkin Checkin @relation(fields: [checkinId], references: [id], onDelete: Cascade)
+
+  @@map("checkin_proofs")
+}
+
+// ─── Points ──────────────────────────────────────────────────────────────────
+
+model PointTransaction {
+  id              String         @id @default(uuid()) @db.Uuid
+  userId          String         @map("user_id") @db.Uuid
+  amount          Int
+  type            PointTxnType
+  checkinId       String?        @map("checkin_id") @db.Uuid
+  /// Set only for CHECKIN_AWARD — enforces one award per check-in
+  awardCheckinId  String?        @unique @map("award_checkin_id") @db.Uuid
+  evidenceType    EvidenceType?  @map("evidence_type")
+  voucherClaimId  String?        @map("voucher_claim_id") @db.Uuid
+  proofLevel      ProofLevel?    @map("proof_level")
+  description     String?
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user         User          @relation(fields: [userId], references: [id])
+  checkin      Checkin?      @relation(fields: [checkinId], references: [id])
+  voucherClaim VoucherClaim? @relation(fields: [voucherClaimId], references: [id])
+
+  @@unique([checkinId, evidenceType])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("point_transactions")
+}
+
+// ─── Badges ──────────────────────────────────────────────────────────────────
+
+model Badge {
+  id                   String            @id @default(uuid()) @db.Uuid
+  slug                 String            @unique
+  name                 String
+  description          String
+  iconObjectKey        String?           @map("icon_object_key")
+  destinationId        String?           @map("destination_id") @db.Uuid
+  issuerOrganizationId String?           @map("issuer_organization_id") @db.Uuid
+  criteriaType         BadgeCriteriaType @map("criteria_type")
+  criteria             Json
+  status               BadgeStatus       @default(draft)
+  sortOrder            Int               @default(0) @map("sort_order")
+  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  destination Destination?  @relation(fields: [destinationId], references: [id])
+  issuer      Organization? @relation("BadgeIssuer", fields: [issuerOrganizationId], references: [id])
+  userBadges  UserBadge[]
+
+  @@index([status, sortOrder])
+  @@map("badges")
+}
+
+model UserBadge {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  badgeId          String   @map("badge_id") @db.Uuid
+  awardedAt        DateTime @default(now()) @map("awarded_at") @db.Timestamptz(6)
+  triggerCheckinId String?  @map("trigger_checkin_id") @db.Uuid
+
+  user           User     @relation(fields: [userId], references: [id])
+  badge          Badge    @relation(fields: [badgeId], references: [id])
+  triggerCheckin Checkin? @relation(fields: [triggerCheckinId], references: [id])
+
+  @@unique([userId, badgeId])
+  @@index([userId, awardedAt(sort: Desc)])
+  @@index([badgeId])
+  @@map("user_badges")
+}
+
+// ─── Merchants ───────────────────────────────────────────────────────────────
+
+model Merchant {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @unique @map("organization_id") @db.Uuid
+  destinationId  String           @map("destination_id") @db.Uuid
+  name           String
+  slug           String
+  category       MerchantCategory
+  description    String?
+  address        String?
+  contactPhone   String?          @map("contact_phone")
+  logoObjectKey  String?          @map("logo_object_key")
+  status         MerchantStatus   @default(draft)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  destination  Destination  @relation(fields: [destinationId], references: [id])
+  vouchers     Voucher[]
+
+  @@unique([destinationId, slug])
+  @@index([status])
+  @@map("merchants")
+}
+
+// ─── Vouchers ────────────────────────────────────────────────────────────────
+
+model Voucher {
+  id             String         @id @default(uuid()) @db.Uuid
+  merchantId     String         @map("merchant_id") @db.Uuid
+  destinationId  String?        @map("destination_id") @db.Uuid
+  title          String
+  description    String?
+  discountLabel  String         @map("discount_label")
+  minLevel       TouristLevel   @default(TRAVELLER) @map("min_level")
+  minBalance     Int            @default(0) @map("min_balance")
+  costPoints     Int            @default(0) @map("cost_points")
+  quotaTotal     Int?           @map("quota_total")
+  quotaClaimed   Int            @default(0) @map("quota_claimed")
+  validFrom      DateTime       @map("valid_from") @db.Timestamptz(6)
+  validUntil     DateTime       @map("valid_until") @db.Timestamptz(6)
+  status         VoucherStatus  @default(draft)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?      @map("deleted_at") @db.Timestamptz(6)
+
+  merchant    Merchant       @relation(fields: [merchantId], references: [id])
+  destination Destination?   @relation(fields: [destinationId], references: [id])
+  claims      VoucherClaim[]
+
+  @@index([merchantId, status])
+  @@index([status, validFrom, validUntil])
+  @@map("vouchers")
+}
+
+model VoucherClaim {
+  id         String             @id @default(uuid()) @db.Uuid
+  voucherId  String             @map("voucher_id") @db.Uuid
+  userId     String             @map("user_id") @db.Uuid
+  claimCode  String             @unique @map("claim_code")
+  status     VoucherClaimStatus @default(active)
+  claimedAt  DateTime           @default(now()) @map("claimed_at") @db.Timestamptz(6)
+  expiresAt  DateTime           @map("expires_at") @db.Timestamptz(6)
+  redeemedAt DateTime?          @map("redeemed_at") @db.Timestamptz(6)
+
+  voucher     Voucher             @relation(fields: [voucherId], references: [id])
+  user        User                @relation(fields: [userId], references: [id])
+  redemption  VoucherRedemption?
+  pointTxns   PointTransaction[]
+
+  @@unique([voucherId, userId])
+  @@index([userId, claimedAt(sort: Desc)])
+  @@index([claimCode])
+  @@map("voucher_claims")
+}
+
+model VoucherRedemption {
+  id                  String   @id @default(uuid()) @db.Uuid
+  voucherClaimId      String   @unique @map("voucher_claim_id") @db.Uuid
+  merchantStaffUserId String   @map("merchant_staff_user_id") @db.Uuid
+  redeemedAt          DateTime @default(now()) @map("redeemed_at") @db.Timestamptz(6)
+
+  voucherClaim      VoucherClaim @relation(fields: [voucherClaimId], references: [id])
+  merchantStaffUser User         @relation("RedeemedByStaff", fields: [merchantStaffUserId], references: [id])
+
+  @@index([merchantStaffUserId, redeemedAt(sort: Desc)])
+  @@map("voucher_redemptions")
+}

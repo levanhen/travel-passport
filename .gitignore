@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.next/
+.turbo/
+*.log
+.env
+.env.local
+.env.*.local
+!.env.example
+apps/api/.env
+apps/api/uploads/
+apps/web/.env.local
+packages/db/prisma/*.db
+coverage/
+.DS_Store
+
+# Internal specs (not published)
+specs/
+
+# Build artifacts
+*.tsbuildinfo
